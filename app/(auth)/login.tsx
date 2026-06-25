@@ -16,6 +16,8 @@ import { signInWithEmailAndPassword, sendPasswordResetEmail } from 'firebase/aut
 import { auth } from '@/lib/firebase';
 import { Eye, EyeOff, Mail, Lock, Building2 } from 'lucide-react-native';
 
+const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
 export default function LoginScreen() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -24,13 +26,39 @@ export default function LoginScreen() {
   const [error, setError] = useState('');
   const [resetSent, setResetSent] = useState(false);
 
-  const handleLogin = async () => {
-    if (!email.trim() || !password.trim()) {
-      setError('Please enter email and password.');
-      return;
+  const [emailError, setEmailError] = useState('');
+  const [passwordError, setPasswordError] = useState('');
+
+  const validate = (): boolean => {
+    let valid = true;
+    const trimmedEmail = email.trim();
+
+    if (!trimmedEmail) {
+      setEmailError('Email is required.');
+      valid = false;
+    } else if (!EMAIL_REGEX.test(trimmedEmail)) {
+      setEmailError('Enter a valid email address.');
+      valid = false;
+    } else {
+      setEmailError('');
     }
-    setLoading(true);
+
+    if (!password) {
+      setPasswordError('Password is required.');
+      valid = false;
+    } else {
+      setPasswordError('');
+    }
+
+    return valid;
+  };
+
+  const handleLogin = async () => {
     setError('');
+    setResetSent(false);
+    if (!validate()) return;
+
+    setLoading(true);
     try {
       await signInWithEmailAndPassword(auth, email.trim(), password);
       router.replace('/(tabs)');
@@ -42,14 +70,23 @@ export default function LoginScreen() {
   };
 
   const handleForgotPassword = async () => {
-    if (!email.trim()) {
-      setError('Enter your email address to reset password.');
+    const trimmedEmail = email.trim();
+    setError('');
+    setResetSent(false);
+
+    if (!trimmedEmail) {
+      setEmailError('Enter your email address to reset password.');
       return;
     }
+    if (!EMAIL_REGEX.test(trimmedEmail)) {
+      setEmailError('Enter a valid email address.');
+      return;
+    }
+    setEmailError('');
+
     try {
-      await sendPasswordResetEmail(auth, email.trim());
+      await sendPasswordResetEmail(auth, trimmedEmail);
       setResetSent(true);
-      setError('');
     } catch (e: any) {
       setError(e.message?.replace('Firebase: ', '') || 'Failed to send reset email.');
     }
@@ -76,35 +113,37 @@ export default function LoginScreen() {
           {error ? <Text style={styles.errorText}>{error}</Text> : null}
           {resetSent ? <Text style={styles.successText}>Password reset email sent!</Text> : null}
 
-          <View style={styles.inputWrapper}>
+          <View style={[styles.inputWrapper, emailError && styles.inputWrapperError]}>
             <Mail size={18} color="#6B7280" style={styles.inputIcon} />
             <TextInput
               style={styles.input}
               placeholder="Email Address"
               placeholderTextColor="#9CA3AF"
               value={email}
-              onChangeText={setEmail}
+              onChangeText={(v) => { setEmail(v); if (emailError) setEmailError(''); }}
               keyboardType="email-address"
               autoCapitalize="none"
               autoCorrect={false}
             />
           </View>
+          {emailError ? <Text style={styles.fieldErrorText}>{emailError}</Text> : null}
 
-          <View style={styles.inputWrapper}>
+          <View style={[styles.inputWrapper, passwordError && styles.inputWrapperError]}>
             <Lock size={18} color="#6B7280" style={styles.inputIcon} />
             <TextInput
               style={[styles.input, styles.passwordInput]}
               placeholder="Password"
               placeholderTextColor="#9CA3AF"
               value={password}
-              onChangeText={setPassword}
-              secureTextEntry={!showPassword}
+              onChangeText={(v) => { setPassword(v); if (passwordError) setPasswordError(''); }}
+              secureTextEntry={false}
               autoCapitalize="none"
             />
             <TouchableOpacity onPress={() => setShowPassword(!showPassword)} style={styles.eyeBtn}>
               {showPassword ? <EyeOff size={18} color="#6B7280" /> : <Eye size={18} color="#6B7280" />}
             </TouchableOpacity>
           </View>
+          {passwordError ? <Text style={styles.fieldErrorText}>{passwordError}</Text> : null}
 
           <TouchableOpacity onPress={handleForgotPassword} style={styles.forgotContainer}>
             <Text style={styles.forgotText}>Forgot Password?</Text>
@@ -190,14 +229,16 @@ const styles = StyleSheet.create({
     borderColor: '#E5E7EB',
     borderRadius: 10,
     backgroundColor: '#F9FAFB',
-    marginBottom: 14,
+    marginBottom: 6,
     paddingHorizontal: 14,
     height: 52,
   },
+  inputWrapperError: { borderColor: '#DC2626' },
   inputIcon: { marginRight: 10 },
   input: { flex: 1, fontSize: 15, color: '#111827' },
   passwordInput: { paddingRight: 8 },
   eyeBtn: { padding: 4 },
+  fieldErrorText: { fontSize: 12, color: '#DC2626', marginBottom: 10, marginTop: 2 },
   forgotContainer: { alignSelf: 'flex-end', marginBottom: 20 },
   forgotText: { fontSize: 13, color: '#1A56DB', fontWeight: '500' },
   loginBtn: {

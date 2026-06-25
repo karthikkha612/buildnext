@@ -27,6 +27,17 @@ const NAV_ITEMS = [
   { label: 'Reports', route: 'reports', icon: '📋' },
 ];
 
+const NAME_REGEX = /^[A-Za-z\s]+$/;
+const PHONE_REGEX = /^\d{10}$/;
+
+type EditErrors = {
+  projectName?: string;
+  siteLocation?: string;
+  plotArea?: string;
+  customerName?: string;
+  customerPhone?: string;
+};
+
 export default function ProjectSummaryScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const [project, setProject] = useState<Project | null>(null);
@@ -41,6 +52,7 @@ export default function ProjectSummaryScreen() {
   const [projectType, setProjectType] = useState('');
   const [customerName, setCustomerName] = useState('');
   const [customerPhone, setCustomerPhone] = useState('');
+  const [errors, setErrors] = useState<EditErrors>({});
 
   useEffect(() => {
     if (!id) return;
@@ -60,8 +72,40 @@ export default function ProjectSummaryScreen() {
     return unsub;
   }, [id]);
 
+  const validate = (): boolean => {
+    const next: EditErrors = {};
+
+    const trimmedProjectName = projectName.trim();
+    if (!trimmedProjectName) next.projectName = 'Project name is required.';
+    else if (trimmedProjectName.length < 3) next.projectName = 'Project name must be at least 3 characters.';
+
+    const trimmedSite = siteLocation.trim();
+    if (!trimmedSite) next.siteLocation = 'Site location is required.';
+
+    if (!plotArea.trim()) next.plotArea = 'Plot area is required.';
+    else if (Number.isNaN(parseFloat(plotArea))) next.plotArea = 'Plot area must be a number.';
+    else if (parseFloat(plotArea) <= 0) next.plotArea = 'Plot area must be greater than 0.';
+
+    const trimmedCustomerName = customerName.trim();
+    if (trimmedCustomerName && !NAME_REGEX.test(trimmedCustomerName)) {
+      next.customerName = 'Name can only contain letters and spaces.';
+    }
+
+    const trimmedPhone = customerPhone.trim();
+    if (trimmedPhone && !PHONE_REGEX.test(trimmedPhone)) {
+      next.customerPhone = 'Enter a valid 10-digit phone number.';
+    }
+
+    setErrors(next);
+    return Object.keys(next).length === 0;
+  };
+
+  const handleCustomerPhoneChange = (value: string) => {
+    setCustomerPhone(value.replace(/\D/g, '').slice(0, 10));
+  };
+
   const handleSaveEdit = async () => {
-    if (!projectName.trim() || !siteLocation.trim()) return;
+    if (!validate()) return;
     setSaving(true);
     try {
       await updateDoc(doc(db, 'projects', id!), {
@@ -158,7 +202,7 @@ export default function ProjectSummaryScreen() {
       </ScrollView>
 
       <View style={styles.actionBar}>
-        <TouchableOpacity style={styles.editBtn} onPress={() => setEditModal(true)}>
+        <TouchableOpacity style={styles.editBtn} onPress={() => { setErrors({}); setEditModal(true); }}>
           <SquarePen size={18} color="#1A56DB" />
           <Text style={styles.editBtnText}>Edit Project</Text>
         </TouchableOpacity>
@@ -180,26 +224,67 @@ export default function ProjectSummaryScreen() {
             </View>
 
             <ScrollView showsVerticalScrollIndicator={false}>
-              {[
-                { label: 'Project Name', value: projectName, setter: setProjectName },
-                { label: 'Site Location', value: siteLocation, setter: setSiteLocation },
-                { label: 'Plot Area (Sq.Ft)', value: plotArea, setter: setPlotArea, keyboard: 'numeric' as any },
-                { label: 'Project Type', value: projectType, setter: setProjectType },
-                { label: 'Customer Name', value: customerName, setter: setCustomerName },
-                { label: 'Customer Phone', value: customerPhone, setter: setCustomerPhone, keyboard: 'phone-pad' as any },
-              ].map((field) => (
-                <View key={field.label}>
-                  <Text style={styles.fieldLabel}>{field.label}</Text>
-                  <TextInput
-                    style={styles.fieldInput}
-                    value={field.value}
-                    onChangeText={field.setter}
-                    keyboardType={field.keyboard || 'default'}
-                    placeholder={field.label}
-                    placeholderTextColor="#9CA3AF"
-                  />
-                </View>
-              ))}
+              <Text style={styles.fieldLabel}>Project Name</Text>
+              <TextInput
+                style={[styles.fieldInput, errors.projectName && styles.fieldInputError]}
+                value={projectName}
+                onChangeText={setProjectName}
+                placeholder="Project Name"
+                placeholderTextColor="#9CA3AF"
+              />
+              {errors.projectName && <Text style={styles.errorText}>{errors.projectName}</Text>}
+
+              <Text style={styles.fieldLabel}>Site Location</Text>
+              <TextInput
+                style={[styles.fieldInput, errors.siteLocation && styles.fieldInputError]}
+                value={siteLocation}
+                onChangeText={setSiteLocation}
+                placeholder="Site Location"
+                placeholderTextColor="#9CA3AF"
+              />
+              {errors.siteLocation && <Text style={styles.errorText}>{errors.siteLocation}</Text>}
+
+              <Text style={styles.fieldLabel}>Plot Area (Sq.Ft)</Text>
+              <TextInput
+                style={[styles.fieldInput, errors.plotArea && styles.fieldInputError]}
+                value={plotArea}
+                onChangeText={setPlotArea}
+                keyboardType="numeric"
+                placeholder="Plot Area (Sq.Ft)"
+                placeholderTextColor="#9CA3AF"
+              />
+              {errors.plotArea && <Text style={styles.errorText}>{errors.plotArea}</Text>}
+
+              <Text style={styles.fieldLabel}>Project Type</Text>
+              <TextInput
+                style={styles.fieldInput}
+                value={projectType}
+                onChangeText={setProjectType}
+                placeholder="Project Type"
+                placeholderTextColor="#9CA3AF"
+              />
+
+              <Text style={styles.fieldLabel}>Customer Name</Text>
+              <TextInput
+                style={[styles.fieldInput, errors.customerName && styles.fieldInputError]}
+                value={customerName}
+                onChangeText={setCustomerName}
+                placeholder="Customer Name"
+                placeholderTextColor="#9CA3AF"
+              />
+              {errors.customerName && <Text style={styles.errorText}>{errors.customerName}</Text>}
+
+              <Text style={styles.fieldLabel}>Customer Phone</Text>
+              <TextInput
+                style={[styles.fieldInput, errors.customerPhone && styles.fieldInputError]}
+                value={customerPhone}
+                onChangeText={handleCustomerPhoneChange}
+                keyboardType="phone-pad"
+                maxLength={10}
+                placeholder="Customer Phone"
+                placeholderTextColor="#9CA3AF"
+              />
+              {errors.customerPhone && <Text style={styles.errorText}>{errors.customerPhone}</Text>}
 
               <TouchableOpacity style={styles.saveBtn} onPress={handleSaveEdit} disabled={saving}>
                 {saving ? <ActivityIndicator color="#fff" /> : <Text style={styles.saveBtnText}>Save Changes</Text>}
@@ -287,6 +372,8 @@ const styles = StyleSheet.create({
     borderWidth: 1, borderColor: '#E5E7EB', borderRadius: 8, height: 44,
     paddingHorizontal: 12, fontSize: 14, color: '#111827', backgroundColor: '#F9FAFB',
   },
+  fieldInputError: { borderColor: '#DC2626' },
+  errorText: { fontSize: 11, color: '#DC2626', marginTop: 4 },
   saveBtn: {
     backgroundColor: '#1A56DB', borderRadius: 10, height: 50,
     justifyContent: 'center', alignItems: 'center', marginTop: 20,

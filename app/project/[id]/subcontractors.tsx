@@ -17,6 +17,10 @@ import { getInitials } from '@/lib/formatting';
 import { ArrowLeft, Plus, X, Phone } from 'lucide-react-native';
 
 const ROLES = ['Mason', 'Plumber', 'Electrician', 'Carpenter', 'Painter', 'Other'];
+const NAME_REGEX = /^[A-Za-z\s]+$/;
+const PHONE_REGEX = /^\d{10}$/;
+
+type FieldErrors = { name?: string; phone?: string; role?: string };
 
 export default function SubcontractorsScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -24,9 +28,10 @@ export default function SubcontractorsScreen() {
   const [loading, setLoading] = useState(true);
   const [modalVisible, setModalVisible] = useState(false);
   const [name, setName] = useState('');
-  const [role, setRole] = useState(ROLES[0]);
+  const [role, setRole] = useState('');
   const [phone, setPhone] = useState('');
   const [saving, setSaving] = useState(false);
+  const [errors, setErrors] = useState<FieldErrors>({});
 
   useEffect(() => {
     if (!id) return;
@@ -37,8 +42,36 @@ export default function SubcontractorsScreen() {
     return unsub;
   }, [id]);
 
+  const validate = (): boolean => {
+    const next: FieldErrors = {};
+    const trimmedName = name.trim();
+
+    if (!trimmedName) next.name = 'Name is required.';
+    else if (trimmedName.length < 2) next.name = 'Name must be at least 2 characters.';
+    else if (!NAME_REGEX.test(trimmedName)) next.name = 'Name can only contain letters and spaces.';
+
+    if (!phone.trim()) next.phone = 'Phone number is required.';
+    else if (!PHONE_REGEX.test(phone.trim())) next.phone = 'Enter a valid 10-digit phone number.';
+
+    if (!role) next.role = 'Please select a role.';
+
+    setErrors(next);
+    return Object.keys(next).length === 0;
+  };
+
+  const handlePhoneChange = (value: string) => {
+    setPhone(value.replace(/\D/g, '').slice(0, 10));
+  };
+
+  const resetForm = () => {
+    setName('');
+    setPhone('');
+    setRole('');
+    setErrors({});
+  };
+
   const handleAdd = async () => {
-    if (!name.trim() || !phone.trim()) return;
+    if (!validate()) return;
     const newSub: Subcontractor = {
       id: Date.now().toString(),
       name: name.trim(),
@@ -51,9 +84,7 @@ export default function SubcontractorsScreen() {
     try {
       await updateDoc(doc(db, 'projects', id!), { subcontractors: updated, updatedAt: new Date() });
       setModalVisible(false);
-      setName('');
-      setPhone('');
-      setRole(ROLES[0]);
+      resetForm();
     } finally {
       setSaving(false);
     }
@@ -75,7 +106,7 @@ export default function SubcontractorsScreen() {
           <ArrowLeft size={22} color="#111827" />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>Subcontractors</Text>
-        <TouchableOpacity style={styles.addBtn} onPress={() => setModalVisible(true)}>
+        <TouchableOpacity style={styles.addBtn} onPress={() => { resetForm(); setModalVisible(true); }}>
           <Plus size={16} color="#1A56DB" />
           <Text style={styles.addBtnText}>Add</Text>
         </TouchableOpacity>
@@ -87,7 +118,7 @@ export default function SubcontractorsScreen() {
             <Text style={styles.emptyIcon}>👷</Text>
             <Text style={styles.emptyTitle}>No subcontractors added</Text>
             <Text style={styles.emptyDesc}>Add subcontractors working on this project.</Text>
-            <TouchableOpacity style={styles.emptyBtn} onPress={() => setModalVisible(true)}>
+            <TouchableOpacity style={styles.emptyBtn} onPress={() => { resetForm(); setModalVisible(true); }}>
               <Text style={styles.emptyBtnText}>+ Add Subcontractor</Text>
             </TouchableOpacity>
           </View>
@@ -132,27 +163,32 @@ export default function SubcontractorsScreen() {
           <View style={styles.modalSheet}>
             <View style={styles.modalHeader}>
               <Text style={styles.modalTitle}>Add Subcontractor</Text>
-              <TouchableOpacity onPress={() => setModalVisible(false)}>
+              <TouchableOpacity onPress={() => { setModalVisible(false); resetForm(); }}>
                 <X size={22} color="#6B7280" />
               </TouchableOpacity>
             </View>
 
-            {[
-              { label: 'Full Name', value: name, setter: setName, keyboard: 'default' as any },
-              { label: 'Phone Number', value: phone, setter: setPhone, keyboard: 'phone-pad' as any },
-            ].map((field) => (
-              <View key={field.label}>
-                <Text style={styles.fieldLabel}>{field.label}</Text>
-                <TextInput
-                  style={styles.fieldInput}
-                  value={field.value}
-                  onChangeText={field.setter}
-                  keyboardType={field.keyboard}
-                  placeholderTextColor="#9CA3AF"
-                  placeholder={field.label}
-                />
-              </View>
-            ))}
+            <Text style={styles.fieldLabel}>Full Name</Text>
+            <TextInput
+              style={[styles.fieldInput, errors.name && styles.fieldInputError]}
+              value={name}
+              onChangeText={setName}
+              placeholderTextColor="#9CA3AF"
+              placeholder="Full Name"
+            />
+            {errors.name && <Text style={styles.errorText}>{errors.name}</Text>}
+
+            <Text style={styles.fieldLabel}>Phone Number</Text>
+            <TextInput
+              style={[styles.fieldInput, errors.phone && styles.fieldInputError]}
+              value={phone}
+              onChangeText={handlePhoneChange}
+              keyboardType="phone-pad"
+              maxLength={10}
+              placeholderTextColor="#9CA3AF"
+              placeholder="Phone Number"
+            />
+            {errors.phone && <Text style={styles.errorText}>{errors.phone}</Text>}
 
             <Text style={styles.fieldLabel}>Role</Text>
             <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.roleScroll}>
@@ -166,6 +202,7 @@ export default function SubcontractorsScreen() {
                 </TouchableOpacity>
               ))}
             </ScrollView>
+            {errors.role && <Text style={styles.errorText}>{errors.role}</Text>}
 
             <TouchableOpacity style={styles.saveBtn} onPress={handleAdd} disabled={saving}>
               {saving ? <ActivityIndicator color="#fff" /> : <Text style={styles.saveBtnText}>Add Subcontractor</Text>}
@@ -287,7 +324,9 @@ const styles = StyleSheet.create({
     color: '#111827',
     backgroundColor: '#F9FAFB',
   },
-  roleScroll: { marginBottom: 4 },
+  fieldInputError: { borderColor: '#DC2626' },
+  errorText: { fontSize: 11, color: '#DC2626', marginTop: 4 },
+  roleScroll: { marginBottom: 4, marginTop: 2 },
   roleChip: {
     paddingHorizontal: 14,
     paddingVertical: 8,

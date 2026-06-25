@@ -55,12 +55,38 @@ export interface Project {
   materials: string[];
   subcontractors: Subcontractor[];
   phases: PhaseStatus[];
+  documents: ProjectDocument[];  // ← ADD THIS
   overallProgress: number;
   status: 'Planning' | 'In Progress' | 'Completed';
   coverPhoto?: string;
   createdAt: Date;
   updatedAt: Date;
 }
+
+export interface ProjectDocument {
+  id: string;
+  name: string;
+  available: boolean;
+  fileUri?: string;
+  fileName?: string; 
+  uploadedAt?: string;
+}
+
+export const DEFAULT_DOCUMENTS: ProjectDocument[] = [
+  { id: 'soil_test', name: 'Soil Test Report', available: false },
+  { id: 'site_plan', name: 'Site Plan', available: false },
+  { id: 'building_approval', name: 'Building Approval Plan', available: false },
+  { id: 'advance_payment', name: 'Advance Payment Receipt', available: false },
+  { id: 'fill_level', name: 'Fill Level Certificate', available: false },
+];
+
+export const DOCUMENT_PHASE: PhaseStatus = {
+  name: 'Document Collection',
+  startDate: '',
+  endDate: '',
+  status: 'upcoming',
+  progress: 0,
+};
 
 export interface Payment {
   id: string;

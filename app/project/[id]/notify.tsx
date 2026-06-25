@@ -1,13 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import {
-  View,
-  Text,
-  StyleSheet,
-  ScrollView,
-  TouchableOpacity,
-  TextInput,
-  ActivityIndicator,
-  Image,
+  View, Text, StyleSheet, ScrollView, TouchableOpacity,
+  TextInput, ActivityIndicator, Image,
 } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
 import { doc, onSnapshot, addDoc, collection } from 'firebase/firestore';
@@ -25,6 +19,7 @@ export default function NotifyScreen() {
   const [photos, setPhotos] = useState<string[]>([]);
   const [sending, setSending] = useState(false);
   const [sent, setSent] = useState(false);
+  const [sendError, setSendError] = useState('');
 
   useEffect(() => {
     if (!id) return;
@@ -39,6 +34,7 @@ export default function NotifyScreen() {
     setSelectedPhases((prev) =>
       prev.includes(name) ? prev.filter((p) => p !== name) : [...prev, name]
     );
+    setSendError('');
   };
 
   const pickImage = () => {
@@ -61,7 +57,11 @@ export default function NotifyScreen() {
   };
 
   const handleSend = async () => {
-    if (selectedPhases.length === 0 && !message.trim()) return;
+    if (selectedPhases.length === 0 && !message.trim()) {
+      setSendError('Please select at least one phase or add a message before sending.');
+      return;
+    }
+    setSendError('');
     setSending(true);
     try {
       await addDoc(collection(db, 'projects', id!, 'updates'), {
@@ -93,6 +93,8 @@ export default function NotifyScreen() {
       </View>
 
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.content}>
+
+        {/* Success Banner */}
         {sent && (
           <View style={styles.sentBanner}>
             <Check size={16} color="#059669" />
@@ -101,6 +103,8 @@ export default function NotifyScreen() {
         )}
 
         <Text style={styles.sectionLabel}>Select Update To Share</Text>
+        <Text style={styles.sectionSubLabel}>Select at least one phase or add a message</Text>
+
         {phases.map((phase) => {
           const isChecked = selectedPhases.includes(phase.name);
           const statusLabels: Record<string, string> = {
@@ -131,7 +135,7 @@ export default function NotifyScreen() {
         <TextInput
           style={styles.messageInput}
           value={message}
-          onChangeText={setMessage}
+          onChangeText={(v) => { setMessage(v); setSendError(''); }}
           placeholder="Type a message to the customer..."
           placeholderTextColor="#9CA3AF"
           multiline
@@ -154,6 +158,13 @@ export default function NotifyScreen() {
       </ScrollView>
 
       <View style={styles.bottomBar}>
+        {/* Error above button */}
+        {sendError ? (
+          <View style={styles.sendErrorBox}>
+            <Text style={styles.sendErrorText}>{sendError}</Text>
+          </View>
+        ) : null}
+
         <TouchableOpacity
           style={[styles.sendBtn, sending && styles.sendBtnDisabled]}
           onPress={handleSend}
@@ -177,51 +188,29 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#F8FAFC' },
   loader: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingTop: 56,
-    paddingHorizontal: 20,
-    paddingBottom: 16,
-    backgroundColor: '#fff',
-    borderBottomWidth: 1,
-    borderBottomColor: '#F3F4F6',
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    paddingTop: 56, paddingHorizontal: 20, paddingBottom: 16,
+    backgroundColor: '#fff', borderBottomWidth: 1, borderBottomColor: '#F3F4F6',
   },
   backBtn: { width: 40, height: 40, justifyContent: 'center' },
   headerTitle: { fontSize: 18, fontWeight: '700', color: '#111827' },
   content: { padding: 20 },
   sentBanner: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#ECFDF5',
-    padding: 12,
-    borderRadius: 10,
-    gap: 8,
-    marginBottom: 16,
+    flexDirection: 'row', alignItems: 'center', backgroundColor: '#ECFDF5',
+    padding: 12, borderRadius: 10, gap: 8, marginBottom: 16,
   },
   sentText: { fontSize: 14, fontWeight: '600', color: '#059669' },
-  sectionLabel: { fontSize: 14, fontWeight: '700', color: '#111827', marginBottom: 12 },
+  sectionLabel: { fontSize: 14, fontWeight: '700', color: '#111827', marginBottom: 4 },
+  sectionSubLabel: { fontSize: 12, color: '#9CA3AF', marginBottom: 12 },
   phaseRow: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    padding: 14,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
-    marginBottom: 10,
-    gap: 12,
-    backgroundColor: '#fff',
+    flexDirection: 'row', alignItems: 'flex-start', padding: 14,
+    borderRadius: 10, borderWidth: 1, borderColor: '#E5E7EB',
+    marginBottom: 10, gap: 12, backgroundColor: '#fff',
   },
   phaseRowChecked: { borderColor: '#1A56DB', backgroundColor: '#EFF6FF' },
   checkbox: {
-    width: 22,
-    height: 22,
-    borderRadius: 6,
-    borderWidth: 2,
-    borderColor: '#D1D5DB',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginTop: 1,
+    width: 22, height: 22, borderRadius: 6, borderWidth: 2,
+    borderColor: '#D1D5DB', justifyContent: 'center', alignItems: 'center', marginTop: 1,
   },
   checkboxChecked: { backgroundColor: '#1A56DB', borderColor: '#1A56DB' },
   phaseInfo: { flex: 1 },
@@ -229,50 +218,33 @@ const styles = StyleSheet.create({
   phaseNameChecked: { color: '#1A56DB' },
   phaseDesc: { fontSize: 12, color: '#9CA3AF', marginTop: 2 },
   messageInput: {
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
-    borderRadius: 10,
-    padding: 12,
-    fontSize: 14,
-    color: '#111827',
-    backgroundColor: '#fff',
-    minHeight: 100,
+    borderWidth: 1, borderColor: '#E5E7EB', borderRadius: 10,
+    padding: 12, fontSize: 14, color: '#111827',
+    backgroundColor: '#fff', minHeight: 100,
   },
   photoGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
   photoThumb: { width: 80, height: 80, borderRadius: 10, backgroundColor: '#F3F4F6' },
   addPhotoBtn: {
-    width: 80,
-    height: 80,
-    borderRadius: 10,
-    borderWidth: 1.5,
-    borderColor: '#D1D5DB',
-    borderStyle: 'dashed',
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: '#fff',
-    gap: 4,
+    width: 80, height: 80, borderRadius: 10, borderWidth: 1.5,
+    borderColor: '#D1D5DB', borderStyle: 'dashed',
+    justifyContent: 'center', alignItems: 'center',
+    backgroundColor: '#fff', gap: 4,
   },
   addPhotoText: { fontSize: 11, color: '#9CA3AF' },
   bottomBar: {
-    padding: 20,
-    paddingBottom: 32,
-    backgroundColor: '#fff',
-    borderTopWidth: 1,
-    borderTopColor: '#F3F4F6',
+    padding: 20, paddingBottom: 32, backgroundColor: '#fff',
+    borderTopWidth: 1, borderTopColor: '#F3F4F6',
   },
+  sendErrorBox: {
+    backgroundColor: '#FEF2F2', borderRadius: 8,
+    padding: 10, marginBottom: 10,
+  },
+  sendErrorText: { color: '#DC2626', fontSize: 12, fontWeight: '500', textAlign: 'center' },
   sendBtn: {
-    backgroundColor: '#25D366',
-    borderRadius: 12,
-    height: 52,
-    flexDirection: 'row',
-    justifyContent: 'center',
-    alignItems: 'center',
-    gap: 8,
-    shadowColor: '#25D366',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 4,
+    backgroundColor: '#25D366', borderRadius: 12, height: 52,
+    flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: 8,
+    shadowColor: '#25D366', shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3, shadowRadius: 8, elevation: 4,
   },
   sendBtnDisabled: { opacity: 0.7 },
   waIcon: { fontSize: 20 },
