@@ -14,6 +14,7 @@ import {
 } from '@/types';
 import { ArrowLeft, Check, FileText, Upload, CheckCircle, XCircle, X } from 'lucide-react-native';
 import * as DocumentPicker from 'expo-document-picker';
+import LocationAutocomplete from '@/components/LocationAutocomplete';
 
 const DateTimePicker = require('@react-native-community/datetimepicker').default;
 
@@ -55,6 +56,8 @@ export default function NewProjectScreen() {
   const [customerAddress, setCustomerAddress] = useState('');
   const [projectName, setProjectName] = useState('');
   const [siteLocation, setSiteLocation] = useState('');
+  const [latitude, setLatitude] = useState('');
+  const [longitude, setLongitude] = useState('');
   const [plotArea, setPlotArea] = useState('');
   const [projectType, setProjectType] = useState<ProjectType>('New Construction');
   const [step1Errors, setStep1Errors] = useState<Step1Errors>({});
@@ -248,6 +251,8 @@ export default function NewProjectScreen() {
         customerEmail: customerEmail.trim(),
         customerAddress: customerAddress.trim(),
         siteLocation: siteLocation.trim(),
+        latitude: parseFloat(latitude),
+        longitude: parseFloat(longitude),
         plotArea: plotArea.trim(),
         projectType,
         requirements,
@@ -414,17 +419,28 @@ export default function NewProjectScreen() {
 
           {step === 1 && (
             <Step1
-              customerName={customerName} setCustomerName={setCustomerName}
-              customerPhone={customerPhone} setCustomerPhone={handlePhoneChange}
-              customerEmail={customerEmail} setCustomerEmail={setCustomerEmail}
-              customerAddress={customerAddress} setCustomerAddress={setCustomerAddress}
-              projectName={projectName} setProjectName={setProjectName}
-              siteLocation={siteLocation} setSiteLocation={setSiteLocation}
-              plotArea={plotArea} setPlotArea={setPlotArea}
-              projectType={projectType} setProjectType={setProjectType}
-              errors={step1Errors}
-            />
-          )}
+  customerName={customerName}
+  setCustomerName={setCustomerName}
+  customerPhone={customerPhone}
+  setCustomerPhone={handlePhoneChange}
+  customerEmail={customerEmail}
+  setCustomerEmail={setCustomerEmail}
+  customerAddress={customerAddress}
+  setCustomerAddress={setCustomerAddress}
+  projectName={projectName}
+  setProjectName={setProjectName}
+  siteLocation={siteLocation}
+  setSiteLocation={setSiteLocation}
+  latitude={latitude}
+  longitude={longitude}
+  setLatitude={setLatitude}
+  setLongitude={setLongitude}
+  plotArea={plotArea}
+  setPlotArea={setPlotArea}
+  projectType={projectType}
+  setProjectType={setProjectType}
+  errors={step1Errors}
+/>)}
 
           {step === 2 && (
             <Step2 requirements={requirements} toggleRequirement={toggleRequirement} error={step2Error} />
@@ -484,7 +500,29 @@ function FormField({ label, value, onChangeText, placeholder, keyboard = 'defaul
   );
 }
 
-function Step1({ customerName, setCustomerName, customerPhone, setCustomerPhone, customerEmail, setCustomerEmail, customerAddress, setCustomerAddress, projectName, setProjectName, siteLocation, setSiteLocation, plotArea, setPlotArea, projectType, setProjectType, errors }: any) {
+ function Step1({
+  customerName,
+  setCustomerName,
+  customerPhone,
+  setCustomerPhone,
+  customerEmail,
+  setCustomerEmail,
+  customerAddress,
+  setCustomerAddress,
+  projectName,
+  setProjectName,
+  siteLocation,
+  setSiteLocation,
+  latitude,
+  longitude,
+  setLatitude,
+  setLongitude,
+  plotArea,
+  setPlotArea,
+  projectType,
+  setProjectType,
+  errors,
+}: any){
   return (
     <View>
       <Text style={styles.sectionTitle}>Customer Details</Text>
@@ -493,8 +531,40 @@ function Step1({ customerName, setCustomerName, customerPhone, setCustomerPhone,
       <FormField label="Email *" value={customerEmail} onChangeText={setCustomerEmail} keyboard="email-address" error={errors.customerEmail} />
       <FormField label="Address *" value={customerAddress} onChangeText={setCustomerAddress} multiline error={errors.customerAddress} />
       <Text style={[styles.sectionTitle, { marginTop: 20 }]}>Project Details</Text>
-      <FormField label="Project Name *" value={projectName} onChangeText={setProjectName} error={errors.projectName} />
-      <FormField label="Site Location *" value={siteLocation} onChangeText={setSiteLocation} error={errors.siteLocation} />
+      <View style={{ marginBottom: 14 }}>
+  <Text style={fieldStyles.label}>
+    Site Location *
+  </Text>
+
+  <LocationAutocomplete
+    value={siteLocation}
+    onSelect={(address, lat, lon) => {
+      setSiteLocation(address);
+
+      if (lat) setLatitude(lat);
+      if (lon) setLongitude(lon);
+    }}
+  />
+
+  {latitude && longitude && (
+    <Text
+      style={{
+        marginTop: 6,
+        color: '#059669',
+        fontSize: 12,
+      }}
+    >
+      📍 Location selected
+    </Text>
+  )}
+
+  {errors.siteLocation && (
+    <Text style={fieldStyles.errorText}>
+      {errors.siteLocation}
+    </Text>
+  )}
+</View>
+      
       <FormField label="Plot Area (Sq.Ft.) *" value={plotArea} onChangeText={setPlotArea} keyboard="numeric" error={errors.plotArea} />
       <Text style={fieldStyles.label}>Project Type *</Text>
       <View style={styles.typeRow}>
