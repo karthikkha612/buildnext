@@ -1,7 +1,9 @@
+import { File, Paths } from 'expo-file-system';
+import { StorageAccessFramework } from 'expo-file-system/legacy';
 import React, { useEffect, useState } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
-  ActivityIndicator, Alert,
+  ActivityIndicator, Alert, Platform,
 } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
 import { doc, onSnapshot, updateDoc } from 'firebase/firestore';
@@ -11,10 +13,10 @@ import { ArrowLeft, FileText, Upload, CheckCircle, XCircle, Download } from 'luc
 import Svg, { Circle } from 'react-native-svg';
 import * as DocumentPicker from 'expo-document-picker';
 import * as Sharing from 'expo-sharing';
-import { File, Paths } from 'expo-file-system';
 
 const CIRCLE_RADIUS = 60;
 const CIRCLE_CIRCUMFERENCE = 2 * Math.PI * CIRCLE_RADIUS;
+const SAF_DIR_KEY = 'buildnext_saf_doc_directory_uri';
 
 function CircularProgress({ progress }: { progress: number }) {
   const strokeDashoffset = CIRCLE_CIRCUMFERENCE * (1 - progress / 100);
@@ -44,6 +46,7 @@ export default function ProgressScreen() {
   const [project, setProject] = useState<Project | null>(null);
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState<string | null>(null);
+  const [downloading, setDownloading] = useState<string | null>(null);
 
   useEffect(() => {
     if (!id) return;
@@ -54,7 +57,25 @@ export default function ProgressScreen() {
     return unsub;
   }, [id]);
 
-  // ─── Document upload for Phase 0 ───────────────────────────────────────────
+  const recomputePhase0 = (allPhases: PhaseStatus[], updatedDocs: ProjectDocument[]) => {
+    const requiredDocs = updatedDocs.filter((d) => !d.optional);
+    const allRequiredUploaded = requiredDocs.every((d) => d.available);
+    return allPhases.map((p, i) => {
+      if (i === 0 && p.name === 'Document Collection') {
+        if (allRequiredUploaded) {
+          return { ...p, progress: 100, status: 'completed' as const };
+        }
+        const doneCount = requiredDocs.filter((d) => d.available).length;
+        const pct = requiredDocs.length > 0
+          ? Math.round((doneCount / requiredDocs.length) * 100)
+          : 100;
+        return { ...p, progress: pct, status: 'in_progress' as const };
+      }
+      return p;
+    });
+  };
+
+  // ── Upload a document ───────────────────────────────────────────────────────
   const handleDocUpload = async (docId: string) => {
     if (!project) return;
     setUploading(docId);
@@ -63,7 +84,6 @@ export default function ProgressScreen() {
         type: ['application/pdf', 'image/*'],
         copyToCacheDirectory: true,
       });
-
       if (!result.canceled && result.assets && result.assets.length > 0) {
         const asset = result.assets[0];
         const updatedDocs: ProjectDocument[] = (project.documents || []).map((d) =>
@@ -71,23 +91,9 @@ export default function ProgressScreen() {
             ? { ...d, available: true, fileUri: asset.uri, fileName: asset.name, uploadedAt: new Date().toISOString() }
             : d
         );
-
-        // Check if all previously missing docs are now uploaded
-        const allUploaded = updatedDocs.every((d) => d.available);
-
-        // Update phases — if all docs uploaded, mark Phase 0 as completed
-        const updatedPhases = (project.phases || []).map((p, i) => {
-          if (i === 0 && p.name === 'Document Collection') {
-            return allUploaded
-              ? { ...p, progress: 100, status: 'completed' as const }
-              : { ...p, progress: Math.round((updatedDocs.filter(d => d.available).length / updatedDocs.length) * 100), status: 'in_progress' as const };
-          }
-          return p;
-        });
-
+        const updatedPhases = recomputePhase0(project.phases || [], updatedDocs);
         const overall = Math.round(updatedPhases.reduce((s, p) => s + p.progress, 0) / updatedPhases.length);
         const projectStatus = overall === 100 ? 'Completed' : overall > 0 ? 'In Progress' : 'Planning';
-
         await updateDoc(doc(db, 'projects', id!), {
           documents: updatedDocs,
           phases: updatedPhases,
@@ -95,12 +101,10 @@ export default function ProgressScreen() {
           status: projectStatus,
           updatedAt: new Date(),
         });
-
-        if (allUploaded) {
-          Alert.alert(
-            '✅ All Documents Uploaded!',
-            'Phase 0 — Document Collection is now complete. Construction phases are ready to begin!'
-          );
+        const requiredDocs = updatedDocs.filter((d) => !d.optional);
+        const allRequiredUploaded = requiredDocs.every((d) => d.available);
+        if (allRequiredUploaded) {
+          Alert.alert('✅ All Required Documents Uploaded!', 'Phase 0 — Document Collection is now complete. Construction phases are ready to begin!');
         } else {
           Alert.alert('Uploaded!', `${asset.name} uploaded successfully.`);
         }
@@ -112,24 +116,94 @@ export default function ProgressScreen() {
     }
   };
 
-  // ─── View / share an uploaded document ─────────────────────────────────────
-  const handleViewDoc = async (document: ProjectDocument) => {
-    if (!document.fileUri) return;
+  // ── Save to Android Downloads folder ────────────────────────────────────────
+  const saveToAndroidDownloads = async (sourceUri: string, fileName: string): Promise<boolean> => {
+    const markerFile = new File(Paths.document, `${SAF_DIR_KEY}.txt`);
+    let directoryUri: string | null = null;
+
     try {
-      const isAvailable = await Sharing.isAvailableAsync();
-      if (isAvailable) {
-        await Sharing.shareAsync(document.fileUri, {
-          dialogTitle: `View — ${document.name}`,
-        });
-      } else {
-        Alert.alert('Cannot open', 'Sharing is not available on this device.');
+      if (markerFile.exists) {
+        directoryUri = markerFile.textSync();
       }
+    } catch {
+      directoryUri = null;
+    }
+
+    if (!directoryUri) {
+      const downloadsUri = StorageAccessFramework.getUriForDirectoryInRoot('Download');
+      const permissions = await StorageAccessFramework.requestDirectoryPermissionsAsync(downloadsUri);
+      if (!permissions.granted) return false;
+      directoryUri = permissions.directoryUri;
+      try {
+        markerFile.create();
+        markerFile.write(directoryUri);
+      } catch {}
+    }
+
+    try {
+      const sourceFile = new File(sourceUri);
+      const base64 = sourceFile.base64Sync();
+      const ext = fileName.split('.').pop() || 'pdf';
+      const mimeType = ext === 'pdf' ? 'application/pdf' : 'image/jpeg';
+      const newUri = await StorageAccessFramework.createFileAsync(directoryUri, fileName, mimeType);
+      await StorageAccessFramework.writeAsStringAsync(newUri, base64, { encoding: 'base64' });
+      return true;
     } catch (e) {
-      Alert.alert('Error', 'Could not open document.');
+      try {
+        if (markerFile.exists) markerFile.delete();
+      } catch {}
+      return false;
     }
   };
 
-  // ─── Phase progress for normal phases ──────────────────────────────────────
+  // ── Download document to phone ──────────────────────────────────────────────
+  const handleDownloadDoc = async (document: ProjectDocument) => {
+    if (!document.fileUri) {
+      Alert.alert('No file', 'This document was marked as available but no file was uploaded yet.');
+      return;
+    }
+
+    setDownloading(document.id);
+    try {
+      const ext = document.fileName?.split('.').pop() || 'pdf';
+      const safeFileName = (document.fileName || `${document.name}.${ext}`).replace(/\s+/g, '_');
+
+      if (Platform.OS === 'android') {
+        const saved = await saveToAndroidDownloads(document.fileUri, safeFileName);
+        if (saved) {
+          Alert.alert('Downloaded!', `"${document.name}" saved to your selected folder.`);
+        } else {
+          // fallback to share
+          const isAvailable = await Sharing.isAvailableAsync();
+          if (isAvailable) {
+            await Sharing.shareAsync(document.fileUri, { dialogTitle: `Save — ${document.name}` });
+          } else {
+            Alert.alert('Error', 'Could not save document. Please try again.');
+          }
+        }
+      } else {
+        // iOS — copy to document dir then share (Save to Files)
+        const destFile = new File(Paths.document, safeFileName);
+        const sourceFile = new File(document.fileUri);
+        await sourceFile.copy(destFile);
+        const isAvailable = await Sharing.isAvailableAsync();
+        if (isAvailable) {
+          await Sharing.shareAsync(destFile.uri, {
+            dialogTitle: `Save or Share — ${document.name}`,
+            UTI: 'public.item',
+          });
+        } else {
+          Alert.alert('Saved!', `"${document.name}" saved to app documents.`);
+        }
+      }
+    } catch (e) {
+      Alert.alert('Error', 'Could not download document. Please try again.');
+    } finally {
+      setDownloading(null);
+    }
+  };
+
+  // ── Update normal phase progress ────────────────────────────────────────────
   const handlePhaseProgress = async (idx: number, progress: number) => {
     if (!project) return;
     const updatedPhases = project.phases.map((p, i) => {
@@ -156,9 +230,96 @@ export default function ProgressScreen() {
   const phase0 = isPhase0 ? phases[0] : null;
   const phase0Complete = phase0?.status === 'completed';
 
-  // Docs that were missing (not available at project creation OR still missing)
-  const missingDocs = documents.filter((d) => !d.available || !d.fileName);
-  const uploadedDocs = documents.filter((d) => d.available && d.fileName);
+  const allRequiredDocs = documents.filter((d) => !d.optional);
+  const allOptionalDocs = documents.filter((d) => d.optional);
+
+  const renderDocRow = (document: ProjectDocument, isOptional = false) => {
+    const hasFile = !!document.fileUri;
+    const isAvailable = document.available;
+    const isMissing = !isAvailable;
+    const isDownloading = downloading === document.id;
+    const isUploading = uploading === document.id;
+
+    return (
+      <View
+        key={document.id}
+        style={[
+          styles.docFullRow,
+          hasFile && styles.docFullRowUploaded,
+          isAvailable && !hasFile && styles.docFullRowPending,
+          isMissing && !isOptional && styles.docFullRowMissing,
+          isMissing && isOptional && styles.docFullRowOptional,
+        ]}
+      >
+        <View style={[
+          styles.docFullIcon,
+          hasFile ? styles.docIconGreen
+            : isAvailable ? styles.docIconBlue
+            : isOptional ? styles.docIconGray
+            : styles.docIconAmber,
+        ]}>
+          <FileText size={16} color={
+            hasFile ? '#059669'
+              : isAvailable ? '#1A56DB'
+              : isOptional ? '#9CA3AF'
+              : '#D97706'
+          } />
+        </View>
+
+        <View style={{ flex: 1 }}>
+          <Text style={styles.docFullName} numberOfLines={1}>{document.name}</Text>
+          <Text style={styles.docFullStatus}>
+            {hasFile
+              ? `📎 ${document.fileName}`
+              : isAvailable
+              ? 'Marked available — tap Upload to attach file'
+              : isOptional
+              ? 'Optional — not uploaded'
+              : 'Not uploaded yet'}
+          </Text>
+        </View>
+
+        {/* Download button — only if file exists */}
+        {hasFile && (
+          <TouchableOpacity
+            style={[styles.docActionBtn, styles.docActionBtnGreen]}
+            onPress={() => handleDownloadDoc(document)}
+            disabled={isDownloading}
+          >
+            {isDownloading
+              ? <ActivityIndicator size="small" color="#fff" />
+              : <>
+                  <Download size={12} color="#fff" />
+                  <Text style={styles.docActionBtnText}>Save</Text>
+                </>
+            }
+          </TouchableOpacity>
+        )}
+
+        {/* Upload button — if available but no file, or if missing */}
+        {!hasFile && (
+          <TouchableOpacity
+            style={[
+              styles.docActionBtn,
+              isAvailable ? styles.docActionBtnBlue
+                : isOptional ? styles.docActionBtnGray
+                : styles.docActionBtnAmber,
+            ]}
+            onPress={() => handleDocUpload(document.id)}
+            disabled={isUploading}
+          >
+            {isUploading
+              ? <ActivityIndicator size="small" color="#fff" />
+              : <>
+                  <Upload size={12} color="#fff" />
+                  <Text style={styles.docActionBtnText}>Upload</Text>
+                </>
+            }
+          </TouchableOpacity>
+        )}
+      </View>
+    );
+  };
 
   return (
     <View style={styles.container}>
@@ -193,16 +354,16 @@ export default function ProgressScreen() {
             {phase0Complete ? (
               <View style={styles.phase0DoneMsg}>
                 <Text style={styles.phase0DoneMsgText}>
-                  ✅ All documents collected. Construction phases are active!
+                  ✅ All required documents collected. Construction phases are active!
                 </Text>
               </View>
             ) : (
               <Text style={styles.phase0Subtitle}>
-                Upload all missing documents to unlock construction phases.
+                Upload all required documents to unlock construction phases. Optional documents won't block this.
               </Text>
             )}
 
-            {/* Progress bar for Phase 0 */}
+            {/* Progress bar */}
             <View style={styles.barContainer}>
               <View style={[styles.barFill, {
                 width: `${phase0?.progress || 0}%` as any,
@@ -210,85 +371,60 @@ export default function ProgressScreen() {
               }]} />
             </View>
             <Text style={styles.phase0Progress}>
-              {uploadedDocs.length} of {documents.length} documents uploaded ({phase0?.progress || 0}%)
+              {documents.filter(d => !d.optional && d.available).length} of{' '}
+              {documents.filter(d => !d.optional).length} required documents uploaded ({phase0?.progress || 0}%)
             </Text>
 
-            {/* Missing docs — upload section */}
-            {!phase0Complete && missingDocs.length > 0 && (
-              <View style={styles.missingDocsSection}>
-                <Text style={styles.missingDocsSectionTitle}>📋 Missing Documents</Text>
-                {missingDocs.map((document) => (
-                  <View key={document.id} style={styles.missingDocRow}>
-                    <View style={styles.missingDocIcon}>
-                      <FileText size={16} color="#D97706" />
-                    </View>
-                    <Text style={styles.missingDocName} numberOfLines={1}>{document.name}</Text>
-                    <TouchableOpacity
-                      style={styles.uploadDocBtn}
-                      onPress={() => handleDocUpload(document.id)}
-                      disabled={uploading === document.id}
-                    >
-                      {uploading === document.id
-                        ? <ActivityIndicator size="small" color="#fff" />
-                        : <>
-                            <Upload size={12} color="#fff" />
-                            <Text style={styles.uploadDocBtnText}>Upload</Text>
-                          </>
-                      }
-                    </TouchableOpacity>
-                  </View>
-                ))}
+            {/* Required Documents */}
+            {allRequiredDocs.length > 0 && (
+              <View style={styles.docFullSection}>
+                <Text style={styles.docFullSectionTitle}>📋 Required Documents</Text>
+                {allRequiredDocs.map((doc) => renderDocRow(doc, false))}
               </View>
             )}
 
-            {/* Uploaded docs — view section */}
-            {uploadedDocs.length > 0 && (
-              <View style={styles.uploadedDocsSection}>
-                <Text style={styles.uploadedDocsSectionTitle}>✅ Uploaded Documents</Text>
-                {uploadedDocs.map((document) => (
-                  <TouchableOpacity
-                    key={document.id}
-                    style={styles.uploadedDocRow}
-                    onPress={() => handleViewDoc(document)}
-                  >
-                    <View style={styles.uploadedDocIcon}>
-                      <FileText size={16} color="#059669" />
-                    </View>
-                    <View style={styles.uploadedDocInfo}>
-                      <Text style={styles.uploadedDocName} numberOfLines={1}>{document.name}</Text>
-                      <Text style={styles.uploadedDocFile} numberOfLines={1}>📎 {document.fileName}</Text>
-                    </View>
-                    <Download size={16} color="#1A56DB" />
-                  </TouchableOpacity>
-                ))}
+            {/* Optional Documents */}
+            {allOptionalDocs.length > 0 && (
+              <View style={styles.docFullSection}>
+                <View style={styles.optionalTitleRow}>
+                  <Text style={[styles.docFullSectionTitle, { color: '#1A56DB' }]}>
+                    📄 Optional Documents
+                  </Text>
+                  <View style={styles.optionalBadge}>
+                    <Text style={styles.optionalBadgeText}>Won't block phases</Text>
+                  </View>
+                </View>
+                {allOptionalDocs.map((doc) => renderDocRow(doc, true))}
               </View>
             )}
           </View>
         )}
 
-        {/* ── Normal Construction Phases ── */}
+        {/* ── Construction Phases ── */}
         <Text style={styles.sectionLabel}>
           {isPhase0 ? 'Construction Phases' : 'Phase Progress'}
         </Text>
 
-        {/* Lock construction phases if Phase 0 not complete */}
         {isPhase0 && !phase0Complete && (
           <View style={styles.lockedBanner}>
             <Text style={styles.lockedBannerText}>
-              🔒 Construction phases are locked until all documents are uploaded and Phase 0 is complete.
+              🔒 Construction phases are locked until all required documents are uploaded.
+              Optional documents don't affect this.
             </Text>
           </View>
         )}
 
         {phases
-          .filter((_, idx) => !(idx === 0 && isPhase0)) // skip Phase 0 from this list
+          .filter((_, idx) => !(idx === 0 && isPhase0))
           .map((phase, idx) => {
             const realIdx = isPhase0 ? idx + 1 : idx;
             const isLocked = isPhase0 && !phase0Complete;
             return (
               <View key={phase.name} style={[styles.phaseCard, isLocked && styles.phaseCardLocked]}>
                 <View style={styles.phaseHeader}>
-                  <Text style={[styles.phaseName, isLocked && styles.phaseNameLocked]}>{phase.name}</Text>
+                  <Text style={[styles.phaseName, isLocked && styles.phaseNameLocked]}>
+                    {phase.name}
+                  </Text>
                   <Text style={[styles.phasePercent, isLocked && { color: '#D1D5DB' }]}>
                     {isLocked ? '🔒' : `${phase.progress}%`}
                   </Text>
@@ -296,7 +432,10 @@ export default function ProgressScreen() {
                 <View style={styles.barContainer}>
                   <View style={[styles.barFill, {
                     width: `${phase.progress}%` as any,
-                    backgroundColor: isLocked ? '#E5E7EB' : phase.status === 'completed' ? '#1A56DB' : phase.status === 'in_progress' ? '#D97706' : '#E5E7EB',
+                    backgroundColor: isLocked ? '#E5E7EB'
+                      : phase.status === 'completed' ? '#1A56DB'
+                      : phase.status === 'in_progress' ? '#D97706'
+                      : '#E5E7EB',
                   }]} />
                 </View>
                 {!isLocked && (
@@ -315,7 +454,7 @@ export default function ProgressScreen() {
                   </View>
                 )}
                 {isLocked && (
-                  <Text style={styles.lockedPhaseHint}>Complete document collection to unlock</Text>
+                  <Text style={styles.lockedPhaseHint}>Complete required document collection to unlock</Text>
                 )}
               </View>
             );
@@ -352,19 +491,12 @@ const styles = StyleSheet.create({
   circleLabel: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, justifyContent: 'center', alignItems: 'center' },
   circlePercent: { fontSize: 32, fontWeight: '800', color: '#111827' },
   circleStatus: { fontSize: 13, color: '#6B7280', marginTop: 2 },
-
-  // Phase 0 card
   phase0Card: {
     backgroundColor: '#FFF7ED', borderRadius: 14, padding: 16,
     marginBottom: 20, borderWidth: 1.5, borderColor: '#FED7AA',
   },
-  phase0CardComplete: {
-    backgroundColor: '#F0FDF4', borderColor: '#BBF7D0',
-  },
-  phase0Header: {
-    flexDirection: 'row', justifyContent: 'space-between',
-    alignItems: 'center', marginBottom: 8,
-  },
+  phase0CardComplete: { backgroundColor: '#F0FDF4', borderColor: '#BBF7D0' },
+  phase0Header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 },
   phase0TitleRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   phase0Badge: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6 },
   phase0BadgePending: { backgroundColor: '#FEF3C7' },
@@ -374,57 +506,47 @@ const styles = StyleSheet.create({
   phase0Subtitle: { fontSize: 12, color: '#92400E', marginBottom: 10 },
   phase0DoneMsg: { backgroundColor: '#DCFCE7', borderRadius: 8, padding: 10, marginBottom: 10 },
   phase0DoneMsgText: { fontSize: 12, color: '#166534', fontWeight: '500' },
-  phase0Progress: { fontSize: 11, color: '#6B7280', marginTop: 6, marginBottom: 12 },
-
-  // Missing docs
-  missingDocsSection: { marginTop: 4 },
-  missingDocsSectionTitle: { fontSize: 12, fontWeight: '700', color: '#D97706', marginBottom: 8 },
-  missingDocRow: {
+  phase0Progress: { fontSize: 11, color: '#6B7280', marginTop: 6, marginBottom: 4 },
+  docFullSection: { marginTop: 12 },
+  docFullSectionTitle: { fontSize: 12, fontWeight: '700', color: '#D97706', marginBottom: 8 },
+  optionalTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 },
+  optionalBadge: { backgroundColor: '#EFF6FF', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 },
+  optionalBadgeText: { fontSize: 10, color: '#1A56DB', fontWeight: '600' },
+  docFullRow: {
     flexDirection: 'row', alignItems: 'center', gap: 10,
     backgroundColor: '#fff', borderRadius: 8, padding: 10,
-    marginBottom: 8, borderWidth: 1, borderColor: '#FDE68A',
+    marginBottom: 8, borderWidth: 1, borderColor: '#E5E7EB',
   },
-  missingDocIcon: {
-    width: 32, height: 32, borderRadius: 8,
-    backgroundColor: '#FEF3C7', justifyContent: 'center', alignItems: 'center',
-  },
-  missingDocName: { flex: 1, fontSize: 13, fontWeight: '500', color: '#374151' },
-  uploadDocBtn: {
+  docFullRowUploaded: { borderColor: '#BBF7D0', backgroundColor: '#F0FDF4' },
+  docFullRowPending: { borderColor: '#DBEAFE', backgroundColor: '#EFF6FF' },
+  docFullRowMissing: { borderColor: '#FDE68A', backgroundColor: '#FFFBEB' },
+  docFullRowOptional: { borderColor: '#F3F4F6', backgroundColor: '#FAFAFA' },
+  docFullIcon: { width: 32, height: 32, borderRadius: 8, justifyContent: 'center', alignItems: 'center' },
+  docIconGreen: { backgroundColor: '#DCFCE7' },
+  docIconBlue: { backgroundColor: '#EFF6FF' },
+  docIconAmber: { backgroundColor: '#FEF3C7' },
+  docIconGray: { backgroundColor: '#F3F4F6' },
+  docFullName: { fontSize: 13, fontWeight: '600', color: '#111827' },
+  docFullStatus: { fontSize: 11, color: '#6B7280', marginTop: 2 },
+  docActionBtn: {
     flexDirection: 'row', alignItems: 'center', gap: 4,
-    backgroundColor: '#1A56DB', paddingHorizontal: 10,
-    paddingVertical: 6, borderRadius: 6,
+    paddingHorizontal: 10, paddingVertical: 6, borderRadius: 6,
+    backgroundColor: '#9CA3AF',
   },
-  uploadDocBtnText: { fontSize: 11, color: '#fff', fontWeight: '600' },
-
-  // Uploaded docs
-  uploadedDocsSection: { marginTop: 12 },
-  uploadedDocsSectionTitle: { fontSize: 12, fontWeight: '700', color: '#059669', marginBottom: 8 },
-  uploadedDocRow: {
-    flexDirection: 'row', alignItems: 'center', gap: 10,
-    backgroundColor: '#fff', borderRadius: 8, padding: 10,
-    marginBottom: 8, borderWidth: 1, borderColor: '#BBF7D0',
-  },
-  uploadedDocIcon: {
-    width: 32, height: 32, borderRadius: 8,
-    backgroundColor: '#DCFCE7', justifyContent: 'center', alignItems: 'center',
-  },
-  uploadedDocInfo: { flex: 1 },
-  uploadedDocName: { fontSize: 13, fontWeight: '600', color: '#111827' },
-  uploadedDocFile: { fontSize: 11, color: '#6B7280', marginTop: 2 },
-
-  // Lock banner
+  docActionBtnGreen: { backgroundColor: '#059669' },
+  docActionBtnBlue: { backgroundColor: '#1A56DB' },
+  docActionBtnAmber: { backgroundColor: '#D97706' },
+  docActionBtnGray: { backgroundColor: '#9CA3AF' },
+  docActionBtnText: { fontSize: 11, color: '#fff', fontWeight: '600' },
   lockedBanner: {
     backgroundColor: '#F3F4F6', borderRadius: 10, padding: 12,
     marginBottom: 12, borderWidth: 1, borderColor: '#E5E7EB',
   },
   lockedBannerText: { fontSize: 12, color: '#6B7280', textAlign: 'center' },
-
-  // Normal phase cards
   phaseCard: {
-    backgroundColor: '#fff', borderRadius: 12, padding: 14,
-    marginBottom: 10, shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.05,
-    shadowRadius: 4, elevation: 2,
+    backgroundColor: '#fff', borderRadius: 12, padding: 14, marginBottom: 10,
+    shadowColor: '#000', shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05, shadowRadius: 4, elevation: 2,
   },
   phaseCardLocked: { backgroundColor: '#F9FAFB', opacity: 0.7 },
   phaseHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 },
@@ -439,7 +561,6 @@ const styles = StyleSheet.create({
   progressBtnText: { fontSize: 11, fontWeight: '600', color: '#6B7280' },
   progressBtnTextActive: { color: '#fff' },
   lockedPhaseHint: { fontSize: 11, color: '#D1D5DB', textAlign: 'center', marginTop: 4 },
-
   bottomBar: {
     padding: 20, paddingBottom: 32, backgroundColor: '#fff',
     borderTopWidth: 1, borderTopColor: '#F3F4F6',

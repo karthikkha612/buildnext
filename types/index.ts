@@ -67,6 +67,7 @@ export interface ProjectDocument {
   id: string;
   name: string;
   available: boolean;
+  optional?: boolean; 
   fileUri?: string;
   fileName?: string; 
   uploadedAt?: string;
@@ -78,6 +79,9 @@ export const DEFAULT_DOCUMENTS: ProjectDocument[] = [
   { id: 'building_approval', name: 'Building Approval Plan', available: false },
   { id: 'advance_payment', name: 'Advance Payment Receipt', available: false },
   { id: 'fill_level', name: 'Fill Level Certificate', available: false },
+  { id: 'survey_sketch', name: 'Survey Sketch', available: false, optional: true },
+  { id: 'water_connection', name: 'Water Connection', available: false, optional: true },
+  { id: 'electricity_connection', name: 'Electricity Connection', available: false, optional: true },
 ];
 
 export const DOCUMENT_PHASE: PhaseStatus = {

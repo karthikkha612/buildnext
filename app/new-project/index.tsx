@@ -150,7 +150,6 @@ export default function NewProjectScreen() {
     }
   };
 
-  // --- Field-level validation, mirrors the rule table: required, format, length ---
   const validateStep1 = (): boolean => {
     const next: Step1Errors = {};
 
@@ -223,7 +222,9 @@ export default function NewProjectScreen() {
     setError('');
     if (step === 1 && !validateStep1()) return;
     if (step === 2 && !validateStep2()) return;
-    if (step < 3) setStep(step + 1);
+    if (step < 3) {
+      setStep(step + 1);
+    }
   };
 
   const handleBack = () => {
@@ -237,7 +238,8 @@ export default function NewProjectScreen() {
     if (!user) return;
     setSaving(true);
 
-    const missingDocs = documents.filter((d) => !d.available);
+    // FIX: Only required (non-optional) missing docs trigger Phase 0
+    const missingDocs = documents.filter((d) => !d.available && !d.optional);
     const phases = missingDocs.length > 0
       ? [{ ...DOCUMENT_PHASE }, ...DEFAULT_PHASES]
       : [...DEFAULT_PHASES];
@@ -251,8 +253,8 @@ export default function NewProjectScreen() {
         customerEmail: customerEmail.trim(),
         customerAddress: customerAddress.trim(),
         siteLocation: siteLocation.trim(),
-        latitude: parseFloat(latitude),
-        longitude: parseFloat(longitude),
+        latitude: parseFloat(latitude) || null,
+        longitude: parseFloat(longitude) || null,
         plotArea: plotArea.trim(),
         projectType,
         requirements,
@@ -277,8 +279,8 @@ export default function NewProjectScreen() {
       Alert.alert(
         'Project Created!',
         missingDocs.length > 0
-          ? `${missingDocs.length} missing document(s) added as Phase 0 — Document Collection. Complete that phase first before construction begins.`
-          : 'All documents ready. Construction can begin!',
+          ? `${missingDocs.length} required document(s) missing — added as Phase 0. Complete document collection before construction begins.`
+          : 'Project created successfully. Construction can begin!',
         [{ text: 'OK', onPress: () => router.replace('/(tabs)') }]
       );
     } catch (e: any) {
@@ -288,8 +290,84 @@ export default function NewProjectScreen() {
     }
   };
 
-  const missingCount = documents.filter((d) => !d.available).length;
-  const allDocumentsReady = missingCount === 0;
+  // FIX: Only count required missing docs for banner and status
+  const missingCount = documents.filter((d) => !d.available && !d.optional).length;
+  const allRequiredReady = missingCount === 0;
+
+  // Separate required and optional docs
+  const requiredDocs = documents.filter((d) => !d.optional);
+  const optionalDocs = documents.filter((d) => d.optional);
+
+  const renderDocCard = (doc: ProjectDocument, isOptional = false) => (
+    <View
+      key={doc.id}
+      style={[
+        styles.docCard,
+        doc.available && styles.docCardAvailable,
+        isOptional && styles.docCardOptional,
+      ]}
+    >
+      <View style={styles.docCardTop}>
+        <View style={styles.docLeft}>
+          <View style={[styles.docIconBox, doc.available ? styles.docIconBoxGreen : styles.docIconBoxGray]}>
+            <FileText size={18} color={doc.available ? '#059669' : '#9CA3AF'} />
+          </View>
+          <View style={{ flex: 1 }}>
+            <View style={styles.docNameRow}>
+              <Text style={[styles.docName, doc.available && styles.docNameAvailable]}>
+                {doc.name}
+              </Text>
+              {isOptional && (
+                <View style={styles.optionalTag}>
+                  <Text style={styles.optionalTagText}>Optional</Text>
+                </View>
+              )}
+            </View>
+            <Text style={styles.docStatusText2}>
+              {doc.fileName
+                ? `📎 ${doc.fileName}`
+                : doc.available
+                ? '✓ Marked as available'
+                : isOptional ? 'Not uploaded — can skip' : 'Not available'}
+            </Text>
+          </View>
+        </View>
+        <TouchableOpacity
+          style={[styles.docToggle, doc.available && styles.docToggleActive]}
+          onPress={() => handleDocumentToggle(doc.id)}
+        >
+          <View style={[styles.docToggleDot, doc.available && styles.docToggleDotActive]} />
+        </TouchableOpacity>
+      </View>
+
+      {doc.available && !doc.fileName && (
+        <TouchableOpacity
+          style={styles.uploadBtn}
+          onPress={() => handleDocumentUpload(doc.id)}
+        >
+          <Upload size={14} color="#1A56DB" />
+          <Text style={styles.uploadBtnText}>Upload Document</Text>
+        </TouchableOpacity>
+      )}
+
+      {doc.fileName && (
+        <View style={styles.uploadedBadge}>
+          <Check size={12} color="#059669" />
+          <Text style={styles.uploadedBadgeText}>Uploaded: {doc.fileName}</Text>
+          <TouchableOpacity
+            onPress={() => setDocuments((prev) =>
+              prev.map((d) => d.id === doc.id
+                ? { ...d, fileUri: undefined, fileName: undefined }
+                : d
+              )
+            )}
+          >
+            <X size={12} color="#9CA3AF" />
+          </TouchableOpacity>
+        </View>
+      )}
+    </View>
+  );
 
   return (
     <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
@@ -327,125 +405,82 @@ export default function NewProjectScreen() {
         <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.content}>
           {error ? <Text style={styles.errorText}>{error}</Text> : null}
 
+          {/* ── Step 0: Documents ── */}
           {step === 0 && (
             <View>
               <Text style={styles.sectionTitle}>Pre-Construction Documents</Text>
               <Text style={styles.sectionSubtitle}>
-                Toggle documents you have. Upload them directly or mark as available. Missing ones become Phase 0.
+                Mark which documents you have. Required ones missing will be added as Phase 0 before construction.
               </Text>
 
-              <View style={[styles.docStatusBanner, allDocumentsReady ? styles.docStatusBannerGreen : styles.docStatusBannerAmber]}>
-                {allDocumentsReady
+              {/* Status banner — only based on required docs */}
+              <View style={[styles.docStatusBanner, allRequiredReady ? styles.docStatusBannerGreen : styles.docStatusBannerAmber]}>
+                {allRequiredReady
                   ? <CheckCircle size={18} color="#059669" />
                   : <XCircle size={18} color="#D97706" />
                 }
-                <Text style={[styles.docStatusText, allDocumentsReady ? styles.docStatusTextGreen : styles.docStatusTextAmber]}>
-                  {allDocumentsReady
-                    ? 'All documents ready — construction can begin directly!'
-                    : `${missingCount} document(s) missing — will be added as Phase 0`}
+                <Text style={[styles.docStatusText, allRequiredReady ? styles.docStatusTextGreen : styles.docStatusTextAmber]}>
+                  {allRequiredReady
+                    ? 'All required documents ready — construction can begin directly!'
+                    : `${missingCount} required document(s) missing — will be added as Phase 0`}
                 </Text>
               </View>
 
-              {documents.map((doc) => (
-                <View key={doc.id} style={[styles.docCard, doc.available && styles.docCardAvailable]}>
-                  <View style={styles.docCardTop}>
-                    <View style={styles.docLeft}>
-                      <View style={[styles.docIconBox, doc.available ? styles.docIconBoxGreen : styles.docIconBoxGray]}>
-                        <FileText size={18} color={doc.available ? '#059669' : '#9CA3AF'} />
-                      </View>
-                      <View style={{ flex: 1 }}>
-                        <Text style={[styles.docName, doc.available && styles.docNameAvailable]}>
-                          {doc.name}
-                        </Text>
-                        <Text style={styles.docStatusText2}>
-                          {doc.fileName
-                            ? `📎 ${doc.fileName}`
-                            : doc.available
-                            ? '✓ Marked as available'
-                            : 'Not available'}
-                        </Text>
-                      </View>
-                    </View>
-                    <TouchableOpacity
-                      style={[styles.docToggle, doc.available && styles.docToggleActive]}
-                      onPress={() => handleDocumentToggle(doc.id)}
-                    >
-                      <View style={[styles.docToggleDot, doc.available && styles.docToggleDotActive]} />
-                    </TouchableOpacity>
-                  </View>
+              {/* Required documents */}
+              <Text style={styles.docSectionLabel}>Required Documents</Text>
+              {requiredDocs.map((doc) => renderDocCard(doc, false))}
 
-                  {doc.available && !doc.fileName && (
-                    <TouchableOpacity
-                      style={styles.uploadBtn}
-                      onPress={() => handleDocumentUpload(doc.id)}
-                    >
-                      <Upload size={14} color="#1A56DB" />
-                      <Text style={styles.uploadBtnText}>Upload Document</Text>
-                    </TouchableOpacity>
-                  )}
-
-                  {doc.fileName && (
-                    <View style={styles.uploadedBadge}>
-                      <Check size={12} color="#059669" />
-                      <Text style={styles.uploadedBadgeText}>Uploaded: {doc.fileName}</Text>
-                      <TouchableOpacity
-                        onPress={() => setDocuments((prev) =>
-                          prev.map((d) => d.id === doc.id
-                            ? { ...d, fileUri: undefined, fileName: undefined }
-                            : d
-                          )
-                        )}
-                      >
-                        <X size={12} color="#9CA3AF" />
-                      </TouchableOpacity>
-                    </View>
-                  )}
-                </View>
-              ))}
-
-              {!allDocumentsReady && (
+              {/* Missing required docs info card */}
+              {!allRequiredReady && (
                 <View style={styles.missingInfoCard}>
                   <Text style={styles.missingInfoTitle}>📋 Will be added as Phase 0</Text>
-                  {documents.filter(d => !d.available).map(d => (
+                  {/* FIX: Only show required missing docs here */}
+                  {documents.filter(d => !d.available && !d.optional).map(d => (
                     <Text key={d.id} style={styles.missingInfoItem}>• {d.name}</Text>
                   ))}
                   <Text style={styles.missingInfoNote}>
-                    Construction phases will begin only after all Phase 0 documents are collected.
+                    Construction phases begin only after all required documents are collected.
                   </Text>
                 </View>
               )}
+
+              {/* Optional documents */}
+              <View style={styles.optionalSectionHeader}>
+                <Text style={styles.docSectionLabel}>Optional Documents</Text>
+                <View style={styles.optionalBadge}>
+                  <Text style={styles.optionalBadgeText}>Can skip</Text>
+                </View>
+              </View>
+              <Text style={styles.optionalNote}>
+                These won't affect project phases — upload now or anytime later from the project screen.
+              </Text>
+              {optionalDocs.map((doc) => renderDocCard(doc, true))}
             </View>
           )}
 
+          {/* ── Step 1: Project Info ── */}
           {step === 1 && (
             <Step1
-  customerName={customerName}
-  setCustomerName={setCustomerName}
-  customerPhone={customerPhone}
-  setCustomerPhone={handlePhoneChange}
-  customerEmail={customerEmail}
-  setCustomerEmail={setCustomerEmail}
-  customerAddress={customerAddress}
-  setCustomerAddress={setCustomerAddress}
-  projectName={projectName}
-  setProjectName={setProjectName}
-  siteLocation={siteLocation}
-  setSiteLocation={setSiteLocation}
-  latitude={latitude}
-  longitude={longitude}
-  setLatitude={setLatitude}
-  setLongitude={setLongitude}
-  plotArea={plotArea}
-  setPlotArea={setPlotArea}
-  projectType={projectType}
-  setProjectType={setProjectType}
-  errors={step1Errors}
-/>)}
+              customerName={customerName} setCustomerName={setCustomerName}
+              customerPhone={customerPhone} setCustomerPhone={handlePhoneChange}
+              customerEmail={customerEmail} setCustomerEmail={setCustomerEmail}
+              customerAddress={customerAddress} setCustomerAddress={setCustomerAddress}
+              projectName={projectName} setProjectName={setProjectName}
+              siteLocation={siteLocation} setSiteLocation={setSiteLocation}
+              latitude={latitude} longitude={longitude}
+              setLatitude={setLatitude} setLongitude={setLongitude}
+              plotArea={plotArea} setPlotArea={setPlotArea}
+              projectType={projectType} setProjectType={setProjectType}
+              errors={step1Errors}
+            />
+          )}
 
+          {/* ── Step 2: Requirements ── */}
           {step === 2 && (
             <Step2 requirements={requirements} toggleRequirement={toggleRequirement} error={step2Error} />
           )}
 
+          {/* ── Step 3: Estimate ── */}
           {step === 3 && (
             <Step3
               startDate={startDate} setStartDate={setStartDate}
@@ -500,29 +535,13 @@ function FormField({ label, value, onChangeText, placeholder, keyboard = 'defaul
   );
 }
 
- function Step1({
-  customerName,
-  setCustomerName,
-  customerPhone,
-  setCustomerPhone,
-  customerEmail,
-  setCustomerEmail,
-  customerAddress,
-  setCustomerAddress,
-  projectName,
-  setProjectName,
-  siteLocation,
-  setSiteLocation,
-  latitude,
-  longitude,
-  setLatitude,
-  setLongitude,
-  plotArea,
-  setPlotArea,
-  projectType,
-  setProjectType,
-  errors,
-}: any){
+function Step1({
+  customerName, setCustomerName, customerPhone, setCustomerPhone,
+  customerEmail, setCustomerEmail, customerAddress, setCustomerAddress,
+  projectName, setProjectName, siteLocation, setSiteLocation,
+  latitude, longitude, setLatitude, setLongitude,
+  plotArea, setPlotArea, projectType, setProjectType, errors,
+}: any) {
   return (
     <View>
       <Text style={styles.sectionTitle}>Customer Details</Text>
@@ -530,41 +549,26 @@ function FormField({ label, value, onChangeText, placeholder, keyboard = 'defaul
       <FormField label="Phone Number *" value={customerPhone} onChangeText={setCustomerPhone} keyboard="phone-pad" maxLength={10} error={errors.customerPhone} />
       <FormField label="Email *" value={customerEmail} onChangeText={setCustomerEmail} keyboard="email-address" error={errors.customerEmail} />
       <FormField label="Address *" value={customerAddress} onChangeText={setCustomerAddress} multiline error={errors.customerAddress} />
+
       <Text style={[styles.sectionTitle, { marginTop: 20 }]}>Project Details</Text>
+      <FormField label="Project Name *" value={projectName} onChangeText={setProjectName} error={errors.projectName} />
+
       <View style={{ marginBottom: 14 }}>
-  <Text style={fieldStyles.label}>
-    Site Location *
-  </Text>
+        <Text style={fieldStyles.label}>Site Location *</Text>
+        <LocationAutocomplete
+          value={siteLocation}
+          onSelect={(address: string, lat?: string, lon?: string) => {
+            setSiteLocation(address);
+            if (lat) setLatitude(lat);
+            if (lon) setLongitude(lon);
+          }}
+        />
+        {latitude && longitude && (
+          <Text style={{ marginTop: 6, color: '#059669', fontSize: 12 }}>📍 Location selected</Text>
+        )}
+        {errors.siteLocation && <Text style={fieldStyles.errorText}>{errors.siteLocation}</Text>}
+      </View>
 
-  <LocationAutocomplete
-    value={siteLocation}
-    onSelect={(address, lat, lon) => {
-      setSiteLocation(address);
-
-      if (lat) setLatitude(lat);
-      if (lon) setLongitude(lon);
-    }}
-  />
-
-  {latitude && longitude && (
-    <Text
-      style={{
-        marginTop: 6,
-        color: '#059669',
-        fontSize: 12,
-      }}
-    >
-      📍 Location selected
-    </Text>
-  )}
-
-  {errors.siteLocation && (
-    <Text style={fieldStyles.errorText}>
-      {errors.siteLocation}
-    </Text>
-  )}
-</View>
-      
       <FormField label="Plot Area (Sq.Ft.) *" value={plotArea} onChangeText={setPlotArea} keyboard="numeric" error={errors.plotArea} />
       <Text style={fieldStyles.label}>Project Type *</Text>
       <View style={styles.typeRow}>
@@ -607,7 +611,12 @@ function Step2({ requirements, toggleRequirement, error }: any) {
   );
 }
 
-function Step3({ startDate, setStartDate, expectedCompletion, setExpectedCompletion, constructionCost, setConstructionCost, materialCost, setMaterialCost, laborCost, setLaborCost, otherExpenses, setOtherExpenses, totalEstimate, errors }: any) {
+function Step3({
+  startDate, setStartDate, expectedCompletion, setExpectedCompletion,
+  constructionCost, setConstructionCost, materialCost, setMaterialCost,
+  laborCost, setLaborCost, otherExpenses, setOtherExpenses,
+  totalEstimate, errors,
+}: any) {
   const [showStartPicker, setShowStartPicker] = useState(false);
   const [showEndPicker, setShowEndPicker] = useState(false);
   const [startDateObj, setStartDateObj] = useState(new Date());
@@ -615,8 +624,7 @@ function Step3({ startDate, setStartDate, expectedCompletion, setExpectedComplet
 
   const formatDisplayDate = (dateStr: string) => {
     if (!dateStr) return '';
-    const d = new Date(dateStr);
-    return d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+    return new Date(dateStr).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
   };
 
   return (
@@ -641,14 +649,9 @@ function Step3({ startDate, setStartDate, expectedCompletion, setExpectedComplet
             {Platform.OS === 'ios' ? (
               <>
                 <DateTimePicker
-                  value={startDateObj}
-                  mode="date"
-                  display="spinner"
+                  value={startDateObj} mode="date" display="spinner"
                   onChange={(_: any, date: Date | undefined) => {
-                    if (date) {
-                      setStartDateObj(date);
-                      setStartDate(date.toISOString().split('T')[0]);
-                    }
+                    if (date) { setStartDateObj(date); setStartDate(date.toISOString().split('T')[0]); }
                   }}
                   minimumDate={new Date()}
                 />
@@ -658,15 +661,10 @@ function Step3({ startDate, setStartDate, expectedCompletion, setExpectedComplet
               </>
             ) : (
               <DateTimePicker
-                value={startDateObj}
-                mode="date"
-                display="default"
+                value={startDateObj} mode="date" display="default"
                 onChange={(_: any, date: Date | undefined) => {
                   setShowStartPicker(false);
-                  if (date) {
-                    setStartDateObj(date);
-                    setStartDate(date.toISOString().split('T')[0]);
-                  }
+                  if (date) { setStartDateObj(date); setStartDate(date.toISOString().split('T')[0]); }
                 }}
                 minimumDate={new Date()}
               />
@@ -675,7 +673,7 @@ function Step3({ startDate, setStartDate, expectedCompletion, setExpectedComplet
         )}
       </View>
 
-      {/* Expected Completion Date */}
+      {/* Expected Completion */}
       <View style={fieldStyles.field}>
         <Text style={fieldStyles.label}>Expected Completion *</Text>
         <TouchableOpacity
@@ -693,14 +691,9 @@ function Step3({ startDate, setStartDate, expectedCompletion, setExpectedComplet
             {Platform.OS === 'ios' ? (
               <>
                 <DateTimePicker
-                  value={endDateObj}
-                  mode="date"
-                  display="spinner"
+                  value={endDateObj} mode="date" display="spinner"
                   onChange={(_: any, date: Date | undefined) => {
-                    if (date) {
-                      setEndDateObj(date);
-                      setExpectedCompletion(date.toISOString().split('T')[0]);
-                    }
+                    if (date) { setEndDateObj(date); setExpectedCompletion(date.toISOString().split('T')[0]); }
                   }}
                   minimumDate={startDateObj}
                 />
@@ -710,15 +703,10 @@ function Step3({ startDate, setStartDate, expectedCompletion, setExpectedComplet
               </>
             ) : (
               <DateTimePicker
-                value={endDateObj}
-                mode="date"
-                display="default"
+                value={endDateObj} mode="date" display="default"
                 onChange={(_: any, date: Date | undefined) => {
                   setShowEndPicker(false);
-                  if (date) {
-                    setEndDateObj(date);
-                    setExpectedCompletion(date.toISOString().split('T')[0]);
-                  }
+                  if (date) { setEndDateObj(date); setExpectedCompletion(date.toISOString().split('T')[0]); }
                 }}
                 minimumDate={startDateObj}
               />
@@ -740,7 +728,9 @@ function Step3({ startDate, setStartDate, expectedCompletion, setExpectedComplet
             placeholderTextColor="#9CA3AF"
           />
         </View>
-        {errors.constructionCost ? <Text style={[fieldStyles.errorText, { marginTop: -8, marginBottom: 8 }]}>{errors.constructionCost}</Text> : null}
+        {errors.constructionCost ? (
+          <Text style={[fieldStyles.errorText, { marginTop: -8, marginBottom: 8 }]}>{errors.constructionCost}</Text>
+        ) : null}
 
         {[
           { label: 'Material Cost', value: materialCost, setter: setMaterialCost },
@@ -812,22 +802,30 @@ const styles = StyleSheet.create({
   docStatusText: { flex: 1, fontSize: 13, fontWeight: '500' },
   docStatusTextGreen: { color: '#059669' },
   docStatusTextAmber: { color: '#D97706' },
+  docSectionLabel: { fontSize: 13, fontWeight: '700', color: '#374151', marginBottom: 10, marginTop: 4 },
+  optionalSectionHeader: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 20, marginBottom: 4 },
+  optionalBadge: { backgroundColor: '#EFF6FF', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6 },
+  optionalBadgeText: { fontSize: 11, color: '#1A56DB', fontWeight: '600' },
+  optionalNote: { fontSize: 12, color: '#9CA3AF', marginBottom: 10 },
   docCard: {
     borderRadius: 12, borderWidth: 1, borderColor: '#E5E7EB',
     marginBottom: 10, backgroundColor: '#fff', overflow: 'hidden',
   },
   docCardAvailable: { borderColor: '#059669', backgroundColor: '#F0FDF4' },
+  docCardOptional: { borderStyle: 'dashed' },
   docCardTop: {
-    flexDirection: 'row', alignItems: 'center',
-    justifyContent: 'space-between', padding: 14,
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: 14,
   },
   docLeft: { flexDirection: 'row', alignItems: 'center', gap: 12, flex: 1 },
   docIconBox: { width: 40, height: 40, borderRadius: 10, justifyContent: 'center', alignItems: 'center' },
   docIconBoxGreen: { backgroundColor: '#DCFCE7' },
   docIconBoxGray: { backgroundColor: '#F3F4F6' },
+  docNameRow: { flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' },
   docName: { fontSize: 14, fontWeight: '600', color: '#374151' },
   docNameAvailable: { color: '#059669' },
   docStatusText2: { fontSize: 11, color: '#9CA3AF', marginTop: 2 },
+  optionalTag: { backgroundColor: '#EFF6FF', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 },
+  optionalTagText: { fontSize: 10, color: '#1A56DB', fontWeight: '600' },
   docToggle: {
     width: 44, height: 24, borderRadius: 12, backgroundColor: '#E5E7EB',
     justifyContent: 'center', padding: 2,
@@ -851,7 +849,7 @@ const styles = StyleSheet.create({
     borderTopWidth: 1, borderTopColor: '#BBF7D0',
   },
   uploadedBadgeText: { flex: 1, fontSize: 12, color: '#059669', fontWeight: '500' },
-  missingInfoCard: { backgroundColor: '#FEF3C7', borderRadius: 10, padding: 14, marginTop: 8 },
+  missingInfoCard: { backgroundColor: '#FEF3C7', borderRadius: 10, padding: 14, marginTop: 8, marginBottom: 8 },
   missingInfoTitle: { fontSize: 13, fontWeight: '700', color: '#D97706', marginBottom: 8 },
   missingInfoItem: { fontSize: 13, color: '#92400E', marginBottom: 4 },
   missingInfoNote: { fontSize: 12, color: '#92400E', marginTop: 8, fontStyle: 'italic' },
@@ -928,8 +926,6 @@ const dateStyles = StyleSheet.create({
     backgroundColor: '#fff', borderRadius: 12, borderWidth: 1,
     borderColor: '#E5E7EB', marginTop: 8, overflow: 'hidden',
   },
-  doneBtn: {
-    backgroundColor: '#1A56DB', padding: 12, alignItems: 'center',
-  },
+  doneBtn: { backgroundColor: '#1A56DB', padding: 12, alignItems: 'center' },
   doneBtnText: { color: '#fff', fontWeight: '600', fontSize: 14 },
 });
