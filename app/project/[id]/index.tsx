@@ -20,6 +20,7 @@ const COVER_IMAGES = [
 const NAV_ITEMS = [
   { label: 'Progress', route: 'progress', icon: '📊' },
   { label: 'Materials', route: 'materials', icon: '🧱' },
+  { label: 'Labour', route: 'labour', icon: '👷' },
   { label: 'Subcontractors', route: 'subcontractors', icon: '👷' },
   { label: 'Timeline', route: 'timeline', icon: '📅' },
   { label: 'Notify Customer', route: 'notify', icon: '📣' },

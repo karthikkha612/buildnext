@@ -61,6 +61,7 @@ export interface Project {
   coverPhoto?: string;
   createdAt: Date;
   updatedAt: Date;
+  labourCostTotal?: number;
 }
 
 export interface ProjectDocument {
@@ -99,6 +100,18 @@ export interface Payment {
   milestone: string;
   amount: number;
   status: 'Paid' | 'Pending';
+}
+
+export interface LabourEntry {
+  id: string;
+  projectId: string;
+  date: string;
+  role: string;
+  numberOfWorkers: number;
+  costPerWorker: number;
+  totalCost: number;
+  notes?: string;
+  createdAt: Date;
 }
 
 export interface ProjectUpdate {
